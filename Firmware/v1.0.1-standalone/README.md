@@ -2,7 +2,13 @@
 
 Patched build of the official `v1.0.1` firmware that lets you use the RGB
 effects (breathing, static, strobing, color cycle) without pairing the
-controller to a printer.
+controller to a printer, with a much smoother and slower breathing animation.
+
+Two changes:
+1. run the selected effect when no printer is connected (instead of a forced blue strobe).
+2. smoother, slower breathing (finer brightness steps).
+
+# 1. Breathing without a printer
 
 ## The problem
 
@@ -37,13 +43,42 @@ get_display_state()  @ vaddr 0x4200a9f6  (file offset 0x4a9f6)
     after:   c.li a0, 1     bytes 05 45     -> no printer => render selected effect
 ```
 
-Only 34 bytes of the image differ from stock: the one code byte, the recomputed
-1-byte image checksum, and the recomputed 32-byte SHA-256 trailer. Everything
-else is identical. `esptool image-info` reports the rebuilt image as valid
-(checksum valid, hash valid).
+# 2. Smoother, slower breathing
+
+## The problem
+
+The breathing effect keeps a phase that bounces between 0 and 60 and steps it by
+`direction (+/-1.0) * 3.0 = +/-3.0` every frame, so a whole breath is only about
+40 brightness steps. That is visibly choppy, and it gets worse the slower you
+set it, because each of those few steps just gets held longer.
+
+## Fix
+
+Drop the two direction constants from `+/-1.0` to `+/-0.2`, so the step becomes
+`+/-0.6` and a breath is about 200 steps: roughly 5x finer (smoother) and 5x
+longer (slower, so the slow end of the speed slider now goes well below the old
+minimum). The phase range (60) and the `/100` brightness maths are untouched, so
+brightness and colour are unchanged.
+
+```
+C_f8 @ 0x3c0e63f8 (file offset 0x63f8):  -1.0 -> -0.2   (00 00 80 bf -> cd cc 4c be)
+C_fc @ 0x3c0e63fc (file offset 0x63fc):  +1.0 -> +0.2   (00 00 80 3f -> cd cc 4c 3e)
+```
+
+These two constants are shared with the H2D printer status fade, which gets the
+same slower/smoother timing. That is only visible with an H2D printer connected.
+
+---
+
+In total 9 code/data bytes differ from stock (the one state byte plus the two
+4-byte constants), plus the recomputed 1-byte image checksum and 32-byte SHA-256
+trailer. Everything else is identical. `esptool image-info` reports the rebuilt
+image as valid (checksum valid, hash valid).
 
 There is no published source for this firmware, so this is a binary patch
 against the official image rather than a source change.
+
+# Build and flashing
 
 ## Files
 
@@ -60,7 +95,7 @@ Hashes (sha256):
 
 ```
 stock       c12b74cd9541d95c8744d9f8169e84d7865bab40f16be56929bc860df920536f
-standalone  f739aeaf3af8b069e532ffccc25463d42d0176dfb946e8819e342475410560c8
+standalone  f58ffd02fec5f4e6f0f2c05c7d7e9b270622840845bace9acbcba79869d5309f
 ```
 
 ## Flashing
